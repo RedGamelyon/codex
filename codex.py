@@ -25,5 +25,41 @@ def create_vault(path: str) -> None:
 
     print(f"✅ Vault created at: {vault_path}")
 
+# ==========================================
+#
+#          Character Creation v1
+#
+# ==========================================
+
+def save_character(vault_path: str, name: str, summary: str) -> Path:
+    vault = Path(vault_path).expanduser().resolve()
+    characters_dir = vault / "characters"
+    characters_dir.mkdir(exist_ok=True)
+
+    # simple filename slug
+    slug = "".join(c.lower() if c.isalnum() else "_" for c in name).strip("_")
+    file_path = characters_dir / f"{slug}.md"
+
+    content = f"""# {name}
+
+## Summary
+{summary}
+
+## Description
+
+## Traits
+
+## History
+
+## Relationships
+"""
+
+    file_path.write_text(content, encoding="utf-8")
+    print(f"✅ Character saved: {file_path}")
+    return file_path
+
+# ==========================================
+
 if __name__ == "__main__":
     create_vault("./my_first_vault")
+    save_character("./my_first_vault", "Alaric Stone", "A stoic knight exiled from his order.")
