@@ -94,6 +94,49 @@ class CreateVaultScreen(ModalScreen):
         self.dismiss()
 # =======================================================================================
 #
+#                                 Character Screen
+#
+# =======================================================================================
+
+class CreateCharacterScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Create Character")
+
+        yield Input(
+                placeholder="Character Name",
+                id="name",
+        )
+        yield Input(
+                placeholder="Short Summary",
+                id="summary",
+        )
+
+        yield Button("Create", id="confirm")
+        yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss()
+
+        elif event.button.id == "confirm":
+            name = self.query_one("#name", Input).value.strip()
+            summary = self.query_one("#summary", Input).value.strip()
+
+            if not name:
+                self.app.notify("Name is required", severity="error")
+                return
+
+            save_character("./my_first_vault", name, summary)
+            self.dismiss()
+            self.app.notify(f"Character '{name}' created")
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+# =======================================================================================
+#
 #                             Codex Application + UI v0.1
 #
 # =======================================================================================
@@ -137,6 +180,9 @@ class CodexApp(App):
 
         elif event.button.id == "create_vault":
             self.push_screen(CreateVaultScreen())
+
+        elif event.button.id == "create_character":
+            self.push_screen(CreateCharacterScreen())
 # =======================================================================================
 
 
