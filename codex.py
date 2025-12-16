@@ -86,9 +86,14 @@ class CreateVaultScreen(ModalScreen):
         elif event.button.id == "confirm":
             path = self.query_one("#vault_path", Input).value.strip()
             if path:
-                create_vault(path)
+                vault_path = Path(path).expanduser().resolve()
+                create_vault(vault_path)
+
+                self.app.active_vault = vault_path
+                self.app.update_vault_status()
+
                 self.dismiss()
-                self.app.notify("Vault created")
+                self.app.notify("Vault created and set as active")
 
     def action_cancel(self) -> None:
         self.dismiss()
@@ -128,7 +133,12 @@ class CreateCharacterScreen(ModalScreen):
                 self.app.notify("Name is required", severity="error")
                 return
 
-            save_character("./my_first_vault", name, summary)
+            if not self.app.active_vault:
+                self.app.notify("No active vault selected", severity="error")
+                return
+
+            save_character(self.app.active_vault, name, summary)
+
             self.dismiss()
             self.app.notify(f"Character '{name}' created")
 
@@ -163,10 +173,20 @@ class CodexApp(App):
     }
     """
 
+    def update_vault_status(self) -> None:
+        status = "None"
+        if self.active_vault:
+            status = str(self.active_vault)
+        self.query_one("#vault_status", Static).update(f"Active Vault: {status}")
+
+    def on_mount(self) -> None:
+        self.active_vault: Path | None = None
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Vertical(
             Static("Welcome to Codex", id="title"),
+            Static("Active Vault: None", id="vault_status"),
             Button("Create Vault", id="create_vault", classes="menu-button"),
             Button("Create Character", id="create_character", classes="menu-button"),
             Button("Quit", id="quit", classes="menu-button"),
@@ -182,6 +202,9 @@ class CodexApp(App):
             self.push_screen(CreateVaultScreen())
 
         elif event.button.id == "create_character":
+            if not self.active_vault:
+                self.notify("Create or open a vault first", severity="warning")
+                return
             self.push_screen(CreateCharacterScreen())
 # =======================================================================================
 
