@@ -1,3 +1,4 @@
+from re import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Button, Static
 from textual.containers import Vertical
@@ -61,6 +62,17 @@ def save_character(vault_path: str, name: str, summary: str) -> Path:
     file_path.write_text(content, encoding="utf-8")
     return file_path
 
+def is_valid_vault(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+
+    if not (path / "vault.yaml").exists():
+        return False
+    if not (path / "characters").exists():
+        return False
+
+    return True
+
 # =======================================================================================
 #
 #                                    Vault Screen
@@ -97,6 +109,46 @@ class CreateVaultScreen(ModalScreen):
 
     def action_cancel(self) -> None:
         self.dismiss()
+
+class OpenVaultScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Open Existing Vault")
+
+        yield Input(
+            placeholder="Path to existing vault",
+            id="vault_path",
+        )
+
+        yield Button("Open", id="confirm")
+        yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss()
+
+        elif event.button.id == "confirm":
+            raw_path = self.query_one("#vault_path", Input).value.strip()
+
+            if not raw_path:
+                self.app.notify("Path is required", severity="error")
+                return
+
+            vault_path = Path(raw_path).expanduser().resolve()
+
+            if not is_valid_vault(vault_path):
+                self.app.notify(
+                    "Invalid vault (missing vault.yaml or characters/)", severity="error",
+                )
+                return
+
+            self.app.active_vault = vault_path
+            self.app.update_vault_status()
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
 # =======================================================================================
 #
 #                                 Character Screen
@@ -158,18 +210,11 @@ class CodexApp(App):
     }
 
     #menu {
-        width: 40;
-        align: center middle;
+        width: 50;
     }
 
-    #title {
-        text-align: center;
-        margin-bottom: 1;
-    }
-
-    .menu-button {
-        width: 100%;
-        content-align: center middle;
+    Button {
+       width: 100%;
     }
     """
 
@@ -187,6 +232,7 @@ class CodexApp(App):
         yield Vertical(
             Static("Welcome to Codex", id="title"),
             Static("Active Vault: None", id="vault_status"),
+            Button("Open Existing Vault", id="open_vault"),
             Button("Create Vault", id="create_vault", classes="menu-button"),
             Button("Create Character", id="create_character", classes="menu-button"),
             Button("Quit", id="quit", classes="menu-button"),
@@ -200,6 +246,9 @@ class CodexApp(App):
 
         elif event.button.id == "create_vault":
             self.push_screen(CreateVaultScreen())
+
+        elif event.button.id == "open_vault":
+            self.push_screen(OpenVaultScreen())
 
         elif event.button.id == "create_character":
             if not self.active_vault:
