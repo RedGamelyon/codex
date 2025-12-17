@@ -73,6 +73,19 @@ def is_valid_vault(path: Path) -> bool:
 
     return True
 
+def get_characters_dir(vault_path: Path) -> Path:
+    return vault_path / "characters"
+
+def list_characters(vault_path: Path) -> list[Path]:
+    characters_dir = get_characters_dir(vault_path)
+
+    if not characters_dir.exists() or not characters_dir.is_dir():
+        return []
+
+    return sorted(
+        file for file in characters_dir.iterdir()
+        if file.is_file() and file.suffix.lower() == ".md"
+    )
 # =======================================================================================
 #
 #                                    Vault Screen
@@ -143,8 +156,50 @@ class OpenVaultScreen(ModalScreen):
                 )
                 return
 
-            self.app.active_vault = vault_path
+
+        self.app.active_vault = vault_path
+
+        # Update UI only if widget exists
+        try:
             self.app.update_vault_status()
+        except Exception as e:
+            self.app.notify(f"Vault opened (UI warning: {e})", severity="warning")
+
+        self.dismiss()
+        self.app.notify("Vault opened")
+
+class ListCharactersScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Close")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Characters in Active Vault", id="title")
+        yield Static("", id="list")
+        yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        list_widget = self.query_one("#list", Static)
+
+        vault = self.app.active_vault
+        if not vault:
+            list_widget.update("No active vault selected.")
+            return
+
+        characters = list_characters(vault)
+
+        if not characters:
+            list_widget.update("No characters found.")
+            return
+
+        lines = []
+        for path in characters:
+            name = path.stem.replace("_", " ").title()
+            lines.append(f"- {name}")
+
+        list_widget.update("\n".join(lines))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss()
 
     def action_cancel(self) -> None:
         self.dismiss()
@@ -235,6 +290,7 @@ class CodexApp(App):
             Button("Open Existing Vault", id="open_vault"),
             Button("Create Vault", id="create_vault", classes="menu-button"),
             Button("Create Character", id="create_character", classes="menu-button"),
+            Button("List Characters", id="list_characters"),
             Button("Quit", id="quit", classes="menu-button"),
             id="menu",
         )
@@ -255,6 +311,13 @@ class CodexApp(App):
                 self.notify("Create or open a vault first", severity="warning")
                 return
             self.push_screen(CreateCharacterScreen())
+
+        elif event.button.id == "list_characters":
+            if not self.active_vault:
+                self.notify("No active vault selected", severity="warning")
+                return
+            self.push_screen(ListCharactersScreen())
+
 # =======================================================================================
 
 
