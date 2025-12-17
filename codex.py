@@ -1,7 +1,7 @@
 from re import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Button, Static
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from pathlib import Path
 import json
 from textual.widgets import Input
@@ -75,6 +75,11 @@ def is_valid_vault(path: Path) -> bool:
 
 def get_characters_dir(vault_path: Path) -> Path:
     return vault_path / "characters"
+
+def read_character(path: Path) -> str:
+    if not path.exists() or not path.is_file():
+        return "Character file not found."
+    return path.read_text(encoding="utf-8")
 
 def list_characters(vault_path: Path) -> list[Path]:
     characters_dir = get_characters_dir(vault_path)
@@ -185,17 +190,57 @@ class ListCharactersScreen(ModalScreen):
             return
 
         characters = list_characters(vault)
-
         if not characters:
             list_widget.update("No characters found.")
             return
 
-        lines = []
-        for path in characters:
-            name = path.stem.replace("_", " ").title()
-            lines.append(f"- {name}")
+        # Clear placeholder text
+        list_widget.update("")
 
-        list_widget.update("\n".join(lines))
+        self.character_map: dict[str, Path] = {}
+
+        for idx, path in enumerate(characters):
+            name = path.stem.replace("_", " ").title()
+            button_id = f"char_{idx}"
+
+            self.character_map[button_id] = path
+
+            self.mount(
+                Button(name, id=button_id),
+                after=list_widget,
+            )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss()
+            return
+
+        if event.button.id in self.character_map:
+            character_path = self.character_map[event.button.id]
+            self.app.push_screen(ViewCharacterScreen(character_path))
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+class ViewCharacterScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Close")]
+
+    def __init__(self, character_path: Path):
+        super().__init__()
+        self.character_path = character_path
+
+    def compose(self) -> ComposeResult:
+        yield Static("View Character", id="title")
+        yield VerticalScroll(
+            Static("", id="content"),
+            id="scroll",
+        )
+        yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        content = self.query_one("#content", Static)
+        text = read_character(self.character_path)
+        content.update(text)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
