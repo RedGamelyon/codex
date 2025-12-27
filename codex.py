@@ -1,4 +1,5 @@
 from re import escape
+from textual import content
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Button, Static
 from textual.containers import Vertical, VerticalScroll
@@ -38,27 +39,37 @@ def create_vault(path: str) -> None:
             encoding="utf-8",
         )
 
-def save_character(vault_path: str, name: str, summary: str) -> Path:
+def save_character(
+    vault_path: str,
+    name: str,
+    summary: str = "",
+    description: str = "",
+    traits: str = "",
+    history: str = "",
+    relationships: str = "",
+) -> Path:
     vault = Path(vault_path).expanduser().resolve()
     characters_dir = vault / "characters"
     characters_dir.mkdir(exist_ok=True)
-
     slug = "".join(c.lower() if c.isalnum() else "_" for c in name).strip("_")
     file_path = characters_dir / f"{slug}.md"
-
     content = f"""# {name}
 
-## Summary
-{summary}
+    ## Summary
+    {summary}
 
-## Description
+    ## Description
+    {description}
 
-## Traits
+    ## Traits
+    {traits}
 
-## History
+    ## History
+    {history}
 
-## Relationships
-"""
+    ## Relationships
+    {relationships}
+    """
     file_path.write_text(content, encoding="utf-8")
     return file_path
 
@@ -91,6 +102,162 @@ def list_characters(vault_path: Path) -> list[Path]:
         file for file in characters_dir.iterdir()
         if file.is_file() and file.suffix.lower() == ".md"
     )
+
+def make_title_box(title: str, padding: int = 2) -> str:
+    """
+    Create an ASCII box around the title.
+    
+    ╔══════════════════╗
+    ║   Character Name ║
+    ╚══════════════════╝
+    """
+    inner_width = len(title) + (padding *2)
+
+    top = "╔" + "═" * inner_width + "╗"
+    middle = "║" + " " * padding + title + " " * padding + "║"
+    bottom = "╚" + "═" * inner_width + "╝"
+
+    return "\n".join([top, middle, bottom])
+
+def make_section_header(section: str) -> str:
+    """
+    Create a simple underlined section header.
+
+    ─── Summary ───
+    """
+    decoration = "─" * 3
+    return f"{decoration} {section} {decoration}"
+
+def render_character(markdown: str) -> str:
+    """
+    Transform character markdown into ASCII-formatted display text.
+
+    Handles;
+    - # Title -> boxed title block
+    - ## Section -> underlined section header
+    - Regular text -> preserved with clean spacing
+    """
+    lines = markdown.strip().split("\n")
+    output = []
+
+    for line in lines:
+        stripped = line.strip()
+
+
+        # Main Title: # Name
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            title = stripped[2:].strip()
+            output.append(make_title_box(title))
+            output.append("") # blank line after title
+
+        # Section header: ## Section
+        elif stripped.startswith("## "):
+            section = stripped[3:].strip()
+            output.append("") # blank line before section
+            output.append(make_section_header(section))
+
+        # Regular content
+        else:
+            output.append(line)
+
+    return "\n".join(output)
+
+def parse_character(markdown: str) -> dict[str, str]:
+    """
+    Parse character markdown into a dictionary of sections.
+
+    Returns dict with keys: name, summary, description, traits, history, relationships
+    """
+
+    sections = {
+        "name": "",
+        "summary": "",
+        "description": "",
+        "traits": "",
+        "history": "",
+        "relationships": "",
+    }
+
+    current_section = None
+    content_lines = []
+
+    for line in markdown.split("\n"):
+        stripped = line.strip()
+
+        # Main title
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            # Save previous section if any
+            if current_section and content_lines:
+                sections[current_section] = "\n".join(content_lines).strip()
+            sections["name"] = stripped[2:].strip()
+            current_section = None
+            content_lines = []
+
+        # Section header
+        elif stripped.startswith("## "):
+            # Save previous section
+            if current_section and content_lines:
+                sections[current_section] = "\n".join(content_lines).strip()
+
+            section_name = stripped[3:].strip().lower()
+            if section_name in sections:
+                current_section =  section_name
+                content_lines = []
+            else:
+                current_section = None
+                content_lines = []
+
+        # Content line
+        elif current_section:
+            content_lines.append(line)
+
+    if current_section and content_lines:
+        sections[current_section] = "\n".join(content_lines).strip()
+
+    return sections
+
+def get_vault_name(vault_path: Path) -> str:
+    """Read vault name from vault.yaml"""
+    yaml_path = vault_path / "vault.yaml"
+    if not yaml_path.exists():
+        return "Unknown Vault"
+
+    content = yaml_path.read_text(encoding="utf-8")
+    for line in content.split("\n"):
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip()
+
+    return "Unknown Vault"
+
+def get_vault_stats(vault_path: Path) -> dict:
+    """Gather stats about the vault"""
+    characters = list_characters(vault_path)
+
+    stats = {
+        "name": get_vault_name(vault_path),
+        "character_count": len(characters),
+        "recent": None,
+        "empty_sections": 0,
+    }
+
+    if not characters:
+        return stats
+
+    # Find most recently modified
+    most_recent = max(characters, key=lambda p: p.stat().st_mtime)
+    stats["recent"] = most_recent.stem.replace("_", " ").title()
+
+    # Count characters with empty sections
+    for char_path in characters:
+        raw = read_character(char_path)
+        data = parse_character(raw)
+        # Check if any section (other than name) is empty
+        for key in ["summary", "description", "traits", "history", "relationships"]:
+            if not data[key]:
+                stats["empty_sections"] += 1
+                break # Count each character only once
+
+    return stats
 # =======================================================================================
 #
 #                                    Vault Screen
@@ -173,6 +340,12 @@ class OpenVaultScreen(ModalScreen):
         self.dismiss()
         self.app.notify("Vault opened")
 
+# =======================================================================================
+#
+#                                 Character Screen
+#
+# =======================================================================================
+
 class ListCharactersScreen(ModalScreen):
     BINDINGS = [("escape", "cancel", "Close")]
 
@@ -235,12 +408,141 @@ class ViewCharacterScreen(ModalScreen):
             Static("", id="content"),
             id="scroll",
         )
+        yield Button("Edit", id="edit")
         yield Button("Close", id="close")
 
     def on_mount(self) -> None:
         content = self.query_one("#content", Static)
-        text = read_character(self.character_path)
-        content.update(text)
+        raw_text = read_character(self.character_path)
+        rendered = render_character(raw_text)
+        content.update(rendered)
+
+    def _on_screen_resume(self) -> None:
+        # Re-render content when returning from edit screen
+        content = self.query_one("#content", Static)
+        raw_text = read_character(self.character_path)
+        rendered = render_character(raw_text)
+        content.update(rendered)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss()
+        elif event.button.id == "edit":
+            self.app.push_screen(EditCharacterScreen(self.character_path))
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+class EditCharacterScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, character_path: Path):
+        super().__init__()
+        self.character_path = character_path
+
+    def compose(self) -> ComposeResult:
+        yield Static("Edit Character", id="title")
+        yield VerticalScroll(
+            Static("Name *", classes="field-label"),
+            Input(placeholder="Character name", id="name"),
+            Static("Summary", classes="field-label"),
+            Input(placeholder="A brief one-liner", id="summary"),
+            Static("Description", classes="field-label"),
+            Input(placeholder="Physical appearance, personality...", id="description"),
+            Static("Traits", classes="field-label"),
+            Input(placeholder="Key traits, quirks, abilities...", id="traits"),
+            Static("History", classes="field-label"),
+            Input(placeholder="Backstory, origin, major events...", id="history"),
+            Static("Relationships", classes="field-label"),
+            Input(placeholder="Connections to other characters...", id="relationships"),
+            id="form-scroll",
+        )
+        yield Button("Save", id="save")
+        yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        # Load existing data and fill the fields
+        raw_text = read_character(self.character_path)
+        data = parse_character(raw_text)
+
+        self.query_one("#name", Input).value = data["name"]
+        self.query_one("#summary", Input).value = data["summary"]
+        self.query_one("#description", Input).value = data["description"]
+        self.query_one("#traits", Input).value = data["traits"]
+        self.query_one("#history", Input).value = data["history"]
+        self.query_one("#relationships", Input).value = data["relationships"]
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss()
+        elif event.button.id == "save":
+            name = self.query_one("#name", Input).value.strip()
+            if not name:
+                self.app.notify("Name is required", severity="error")
+                return
+            summary = self.query_one("#summary", Input).value.strip()
+            description = self.query_one("#description", Input).value.strip()
+            traits = self.query_one("#traits", Input).value.strip()
+            history = self.query_one("#history", Input).value.strip()
+            relationships = self.query_one("#relationships", Input).value.strip()
+
+            # Write directly to the existing file
+            content = f"""# {name}
+
+            ## Summary
+            {summary}
+
+            ## Description
+            {description}
+
+            ## Traits
+            {traits}
+
+            ## History
+            {history}
+
+            ## Relationships
+            {relationships}
+            """
+            self.character_path.write_text(content, encoding="utf-8")
+            self.dismiss()
+            self.app.notify(f"Character '{name}' saved")
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+class DashboardScreen(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Close")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="dashboard-content")
+        yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        content = self.query_one("#dashboard-content", Static)
+
+        if not self.app.active_vault:
+            content.update("No active_vault.")
+            return
+        
+        stats = get_vault_stats(self.app.active_vault)
+
+        # Build the dashboard display
+        name_box = make_title_box(stats["name"])
+        
+        recent = stats["recent"] or "None yet"
+        incomplete = stats["empty_sections"]
+        
+        display = f"""{name_box}
+
+─── Stats ───
+
+  Characters:  {stats["character_count"]}
+  Recently Modified:  {recent}
+  Incomplete Profiles:  {incomplete}
+
+"""
+        content.update(display)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
@@ -249,51 +551,60 @@ class ViewCharacterScreen(ModalScreen):
     def action_cancel(self) -> None:
         self.dismiss()
 
-# =======================================================================================
-#
-#                                 Character Screen
-#
-# =======================================================================================
-
 class CreateCharacterScreen(ModalScreen):
     BINDINGS = [("escape", "cancel", "Cancel")]
 
     def compose(self) -> ComposeResult:
-        yield Static("Create Character")
-
-        yield Input(
-                placeholder="Character Name",
-                id="name",
+        yield Static("Create Character", id="title")
+        yield VerticalScroll(
+            Static("Name *", classes="field-label"),
+            Input(placeholder="Character name", id="name"),
+            Static("Summary", classes="field-label"),
+            Input(placeholder="A brief one-liner", id="summary"),
+            Static("Description", classes="field-label"),
+            Input(placeholder="Physical appearance, personality...", id="description"),
+            Static("Traits", classes="field-label"),
+            Input(placeholder="Key traits, quirks, abilities...", id="traits"),
+            Static("History", classes="field-label"),
+            Input(placeholder="Backstory, origin, major events...", id="history"),
+            Static("Relationships", classes="field-label"),
+            Input(placeholder="Connections to other characters...", id="relationships"),
+            id="form-scroll",
         )
-        yield Input(
-                placeholder="Short Summary",
-                id="summary",
-        )
-
         yield Button("Create", id="confirm")
         yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss()
-
         elif event.button.id == "confirm":
             name = self.query_one("#name", Input).value.strip()
-            summary = self.query_one("#summary", Input).value.strip()
-
             if not name:
                 self.app.notify("Name is required", severity="error")
                 return
-
             if not self.app.active_vault:
                 self.app.notify("No active vault selected", severity="error")
                 return
 
-            save_character(self.app.active_vault, name, summary)
-
+            # Gather all fields
+            summary = self.query_one("#summary", Input).value.strip()
+            description = self.query_one("#description", Input).value.strip()
+            traits = self.query_one("#traits", Input).value.strip()
+            history = self.query_one("#history", Input).value.strip()
+            relationships = self.query_one("#relationships", Input).value.strip()
+            
+            save_character(
+                self.app.active_vault,
+                name,
+                summary,
+                description,
+                traits,
+                history,
+                relationships,
+            )
             self.dismiss()
             self.app.notify(f"Character '{name}' created")
-
+    
     def action_cancel(self) -> None:
         self.dismiss()
 
@@ -316,6 +627,15 @@ class CodexApp(App):
     Button {
        width: 100%;
     }
+    #form-scroll {
+        height: 20;
+        border: solid green;
+        padding: 1;
+    }
+    .field-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
     """
 
     def update_vault_status(self) -> None:
@@ -334,6 +654,7 @@ class CodexApp(App):
             Static("Active Vault: None", id="vault_status"),
             Button("Open Existing Vault", id="open_vault"),
             Button("Create Vault", id="create_vault", classes="menu-button"),
+            Button("Dashboard", id="dashboard"),
             Button("Create Character", id="create_character", classes="menu-button"),
             Button("List Characters", id="list_characters"),
             Button("Quit", id="quit", classes="menu-button"),
@@ -362,6 +683,12 @@ class CodexApp(App):
                 self.notify("No active vault selected", severity="warning")
                 return
             self.push_screen(ListCharactersScreen())
+
+        elif event.button.id == "dashboard":
+            if not self.active_vault:
+                self.notify("No active vault selected", severity="warning")
+                return
+            self.push_screen(DashboardScreen())
 
 # =======================================================================================
 
