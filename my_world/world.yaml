@@ -1,0 +1,18 @@
+calendar:
+  current_year: 500
+  end_year: 1500
+  eras:
+  - color: '#E74C3C'
+    end: 500
+    name: War Era
+    start: 489
+  negative_label: BC
+  positive_label: AD
+  start_year: 1
+  time_format: age_year
+description: 'Vault: my_world'
+enabled_sections:
+- characters
+- timeline
+name: my_world
+version: '1.0'

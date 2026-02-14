@@ -12,7 +12,7 @@ from raylib import (
     KEY_BACKSPACE, KEY_DELETE, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
     KEY_HOME, KEY_END, KEY_ENTER, KEY_A, KEY_C, KEY_V, KEY_X,
     KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL, KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT,
-    ffi,
+    ffi, GetScreenWidth, GetScreenHeight,
 )
 
 from .fonts import draw_text as DrawText, measure_text as MeasureText
@@ -774,18 +774,20 @@ def draw_scrollbar(x: int, y: int, height: int, offset: int, content_height: int
     DrawRectangle(x, scrollbar_y, 8, scrollbar_height, (70, 70, 100, 255))
 
 
-def draw_toasts(toasts, window_width: int = 1280, window_height: int = 720):
+def draw_toasts(toasts):
     """Draw toast notifications in the bottom-right corner."""
     from time import monotonic
 
     if not toasts:
         return
 
-    toast_width = 300
+    sw = GetScreenWidth()
+    sh = GetScreenHeight()
+    toast_width = min(300, sw - 40)
     toast_height = 40
     padding = 8
-    start_x = window_width - toast_width - 20
-    start_y = window_height - 20
+    start_x = sw - toast_width - 20
+    start_y = sh - 20
     now = monotonic()
 
     for i, toast in enumerate(list(reversed(toasts))[:5]):
@@ -832,8 +834,8 @@ def draw_context_menu():
     menu_h = item_h * len(items)
 
     # Clamp menu position to window
-    menu_x = min(menu.x, 1280 - menu_w - 5)
-    menu_y = min(menu.y, 720 - menu_h - 5)
+    menu_x = min(menu.x, GetScreenWidth() - menu_w - 5)
+    menu_y = min(menu.y, GetScreenHeight() - menu_h - 5)
 
     # Check if user has a selection
     has_selection = menu.target_input.selection_start is not None

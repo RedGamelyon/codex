@@ -16,14 +16,14 @@ Codex gives you a dedicated space to build characters with customizable template
 - **Dynamic field types** — Text, multiline, number, tags, portrait images, and full-size main images
 - **Template editor** — Create and modify templates directly in the app
 - **Image support** — Attach portraits and images to characters with configurable dimensions
-- **Vault system** — Organize characters into separate vaults (worlds, campaigns, projects)
+- **World system** — Organize characters into separate worlds (campaigns, projects, settings)
 - **Markdown storage** — Characters are saved as `.md` files with YAML frontmatter (Obsidian-compatible)
 - **Search and sort** — Filter characters by name or tag, sort by name or date
 - **Duplicate characters** — One-click duplication with all fields and images copied
 - **Vim-style navigation** — `j`/`k`/`h`/`l` for keyboard-driven workflows
 - **Keyboard shortcuts** — Full clipboard support, text selection, and a `?` help overlay
-- **Recent vaults** — Quick access to your last-opened worlds
-- **Open in file manager** — Jump to your vault folder from the app
+- **Recent worlds** — Quick access to your last-opened worlds
+- **Open in file manager** — Jump to your world folder from the app
 - **JetBrains Mono** — Clean monospace font loaded at native sizes for crisp rendering
 
 ---
@@ -52,7 +52,7 @@ python main.py
 |---------|---------|---------|
 | Python  | 3.10+   | Runtime |
 | raylib  | 5.5+    | GUI rendering |
-| PyYAML  | 6.0+    | Template and vault config parsing |
+| PyYAML  | 6.0+    | Template and world config parsing |
 
 **Optional:** JetBrains Mono or JetBrainsMono Nerd Font installed on your system for the best text rendering. Falls back to Fira Code, Source Code Pro, Ubuntu Mono, Hack, or raylib's default font.
 
@@ -60,19 +60,19 @@ python main.py
 
 ## Usage
 
-### Creating a Vault
+### Creating a World
 
-A vault is a folder that holds your characters, templates, and images. When you first launch Codex, click **Create Vault** and choose a name and location. The vault structure is created automatically.
+A world is a folder that holds your characters, templates, and images. When you first launch Codex, click **Create World** and choose a name and location. The world structure is created automatically.
 
 ### Creating Characters
 
-With a vault open, click **New Character**. Fill in the fields defined by your active template and click **Create**. Characters are saved as markdown files in the `characters/` directory.
+With a world open, click **New Character**. Fill in the fields defined by your active template and click **Create**. Characters are saved as markdown files in the `characters/` directory.
 
 ### Using Templates
 
 Templates define what fields appear on a character sheet. The default template includes Name, Summary, Description, Traits, History, Relationships, and Tags — but you can create your own.
 
-Open the **Templates** editor from the vault actions panel to add, remove, reorder fields, and change field types. Templates are saved as markdown files in `templates/`.
+Open the **Templates** editor from the world actions panel to add, remove, reorder fields, and change field types. Templates are saved as markdown files in `templates/`.
 
 ### Adding Images
 
@@ -156,23 +156,24 @@ description: Template for fantasy RPG characters
 
 ---
 
-## Vault Structure
+## World Structure
 
 ```
 my-world/
-├── vault.yaml              # Vault name and metadata
+├── world.yaml              # World name and metadata
 ├── templates/
 │   ├── default.md           # Default character template
 │   └── custom_template.md   # Your custom templates
 └── characters/
     ├── elena_blackwood.md   # Character file (markdown)
     ├── ryn_ashford.md
-    └── images/
-        ├── elena_blackwood/
-        │   └── portrait.png
-        └── ryn_ashford/
-            ├── portrait.jpg
-            └── reference.png
+    ├── images/
+    │   ├── elena_blackwood/
+    │   │   └── portrait.png
+    │   └── ryn_ashford/
+    │       ├── portrait.jpg
+    │       └── reference.png
+    └── ...
 ```
 
 Characters are plain markdown files. You can edit them in any text editor, and they'll sync with tools like Obsidian, Git, or Syncthing.
@@ -181,7 +182,7 @@ Characters are plain markdown files. You can edit them in any text editor, and t
 
 ## Configuration
 
-Codex stores user settings at `~/.config/codex/config.json`. Currently this tracks your recently opened vaults. No telemetry, no accounts, no cloud — your data stays on your machine.
+Codex stores user settings at `~/.config/codex/config.json`. Currently this tracks your recently opened worlds. No telemetry, no accounts, no cloud — your data stays on your machine.
 
 ---
 
@@ -189,7 +190,7 @@ Codex stores user settings at `~/.config/codex/config.json`. Currently this trac
 
 Planned for future versions:
 
-- **World restructure** — Locations, timelines, and codex sections beyond characters
+- **Sections** — Locations, timelines, and codex sections beyond characters
 - **Map view** — Visual map with pinned locations
 - **Relationship graph** — Visual connections between characters
 - **Export** — PDF, HTML, and other export formats

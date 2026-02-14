@@ -2,32 +2,26 @@
 name: Default Character
 author: Codex
 version: 1.0
-description: Standard character template with all default fields
+description: Standard character template
 ---
 
-## portait
-{portait|mimage|required}
+## Portrait
+{portrait|image|w=150|h=150}
 
 ## Name
 {name|required}
 
+## Tags
+{tags|tags}
+
 ## Summary
-{summary|multiline}
+{summary}
 
 ## Description
 {description|multiline}
-
-## image
-{image|image}
 
 ## Traits
 {traits|multiline}
 
 ## History
 {history|multiline}
-
-## Relationships
-{relationships|multiline}
-
-## Tags
-{tags|tags}

@@ -30,13 +30,22 @@ def load_portrait_texture(portrait_path: Path):
     return None
 
 
+def _get_entity_section(state) -> str:
+    """Get the current entity section from state, defaulting to 'characters'."""
+    section = getattr(state, 'current_section', 'characters')
+    if section in ("overview", "settings", "dashboard"):
+        return "characters"
+    return section
+
+
 def get_or_load_image(state, character_name: str, field_key: str = "portrait"):
     """Get a cached image texture for a field, loading if needed. Returns texture or None."""
-    from helpers import get_character_slug, find_portrait
+    from helpers import get_character_slug, find_entity_image
 
-    if not state.active_vault:
+    if not state.active_world:
         return None
 
+    section = _get_entity_section(state)
     slug = get_character_slug(character_name)
     cache_key = f"{slug}:{field_key}"
 
@@ -48,7 +57,7 @@ def get_or_load_image(state, character_name: str, field_key: str = "portrait"):
         return cached["texture"]
 
     # Try to find and load
-    img_path = find_portrait(state.active_vault, character_name, field_key=field_key)
+    img_path = find_entity_image(state.active_world, section, character_name, field_key=field_key)
     if img_path is None:
         state.portrait_cache[cache_key] = None
         return None
@@ -121,11 +130,12 @@ def get_or_load_portrait(state, character_name: str):
 
     Legacy wrapper around get_or_load_image for backward compatibility.
     """
-    from helpers import get_character_slug, find_portrait
+    from helpers import get_character_slug, find_entity_image
 
-    if not state.active_vault:
+    if not state.active_world:
         return None
 
+    section = _get_entity_section(state)
     slug = get_character_slug(character_name)
 
     # Check legacy cache key first (for existing callers)
@@ -136,7 +146,7 @@ def get_or_load_portrait(state, character_name: str):
         return cached["texture"]
 
     # Try to find and load
-    portrait_path = find_portrait(state.active_vault, character_name)
+    portrait_path = find_entity_image(state.active_world, section, character_name)
     if portrait_path is None:
         state.portrait_cache[slug] = None
         return None

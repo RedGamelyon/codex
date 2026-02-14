@@ -20,19 +20,19 @@ class Toast:
 class AppState:
     """Main application state."""
 
-    # Vault
-    active_vault: Path | None = None
+    # World
+    active_world: Path | None = None
     characters: list[Path] = field(default_factory=list)
 
     # Navigation
-    view_mode: str = "dashboard"  # dashboard, character_list, character_view, character_create, character_edit, template_editor, stats
+    view_mode: str = "dashboard"  # dashboard, overview, character_list, character_view, character_create, character_edit, template_editor, stats, settings, timeline
 
     # Character selection
     selected_character: Path | None = None
     character_data: dict | None = None
 
     # Modal state
-    modal_open: str | None = None  # create_vault, open_vault, delete_confirm, search, edit_field, fullscreen_edit, unsaved_warning
+    modal_open: str | None = None  # create_world, open_world, delete_confirm, delete_world_confirm, search, edit_field, fullscreen_edit, unsaved_warning, link_picker
 
     # Input state
     text_input: str = ""
@@ -42,8 +42,12 @@ class AppState:
     _form_data_snapshot: dict = field(default_factory=dict)
     pending_navigation: str | None = None
 
-    # Recent vaults
-    recent_vaults: list[Path] = field(default_factory=list)
+    # Recent worlds
+    recent_worlds: list[Path] = field(default_factory=list)
+
+    # Section system
+    current_section: str = "overview"
+    enabled_sections: list[str] = field(default_factory=lambda: ["characters"])
 
     # Search/filter
     search_filter: str = ""
@@ -62,12 +66,12 @@ class AppState:
     # Text input states (for stateful text input components)
     input_states: dict | None = None
 
-    # Vault creation/open state
-    discovered_vaults: list[Path] = field(default_factory=list)
-    selected_vault_index: int = -1
+    # World creation/open state
+    discovered_worlds: list[Path] = field(default_factory=list)
+    selected_world_index: int = -1
     default_locations: list[Path] = field(default_factory=list)
     selected_location_index: int = 0
-    vault_name_input: str = ""
+    world_name_input: str = ""
     custom_location_input: str = ""
     show_custom_location: bool = False
 
@@ -79,6 +83,10 @@ class AppState:
 
     # Character sorting
     sort_mode: str = "name_asc"
+
+    # Folder system
+    folder_collapsed: dict = field(default_factory=dict)  # "section/folder_slug" -> bool
+    folder_data: dict | None = None  # cached list_entities_with_folders result
 
     # Vim navigation
     focused_panel: str = "main"
@@ -111,6 +119,48 @@ class AppState:
     # Shortcuts help overlay
     show_shortcuts_help: bool = False
 
+    # Section popup (+ Section button)
+    show_section_popup: bool = False
+
+    # Timeline state
+    timeline_events: list = field(default_factory=list)
+    timeline_eras: list = field(default_factory=list)
+    view_center_year: float = 500.0
+    zoom_level: float = 1.0
+    timeline_dragging: bool = False
+    timeline_drag_start_x: float = 0.0
+    timeline_drag_start_year: float = 0.0
+    selected_event_index: int = -1
+    hovered_event_index: int = -1
+    selected_event_data: dict | None = None
+    _timeline_last_click_time: float = 0.0
+
+    # Event dragging (drag-to-reposition)
+    event_dragging: bool = False
+    event_drag_index: int = -1
+    event_drag_start_x: float = 0.0
+    event_drag_original_date: float = 0.0
+
+    # Timeline bounds & display config (from calendar in world.yaml)
+    timeline_start_year: float = -500.0
+    timeline_end_year: float = 1500.0
+    timeline_current_year: float | None = None
+    timeline_time_format: str = "year_only"
+    timeline_negative_label: str = "BC"
+    timeline_positive_label: str = "AD"
+
+    # Era editor state
+    era_editor_eras: list = field(default_factory=list)
+    era_editor_selected: int = -1
+
+    # Link picker state
+    link_picker_open: bool = False
+    link_picker_field: str = ""              # which field key we're picking for
+    link_picker_targets: list = field(default_factory=list)  # target sections
+    link_picker_available: list = field(default_factory=list)  # [{section, slug, name}]
+    link_picker_selected: list = field(default_factory=list)  # currently checked items
+    link_picker_scroll: int = 0
+
     def has_unsaved_changes(self) -> bool:
         """Check if form data differs from snapshot."""
         if self.view_mode not in ("character_create", "character_edit"):
@@ -127,11 +177,11 @@ class AppState:
         self.pending_navigation = None
         self.error_message = ""
         self.form_scroll_offset = 0
-        self.discovered_vaults = []
-        self.selected_vault_index = -1
+        self.discovered_worlds = []
+        self.selected_world_index = -1
         self.default_locations = []
         self.selected_location_index = 0
-        self.vault_name_input = ""
+        self.world_name_input = ""
         self.custom_location_input = ""
         self.show_custom_location = False
         self.fullscreen_edit_field = None
@@ -151,6 +201,19 @@ class AppState:
         if self.pending_images:
             self.invalidate_portrait("_pending")
             self.pending_images = {}
+        # Clear era editor state
+        self.era_editor_eras = []
+        self.era_editor_selected = -1
+        # Clear link picker state
+        self.link_picker_open = False
+        self.link_picker_field = ""
+        self.link_picker_targets = []
+        self.link_picker_available = []
+        self.link_picker_selected = []
+        self.link_picker_scroll = 0
+        # Clear event drag state
+        self.event_dragging = False
+        self.event_drag_index = -1
 
     def reset_scroll(self):
         """Reset scroll offsets."""
@@ -158,12 +221,18 @@ class AppState:
         self.view_scroll_offset = 0
 
     def load_characters(self):
-        """Load character list from active vault."""
-        if self.active_vault:
-            from helpers import list_characters
-            self.characters = list_characters(self.active_vault)
+        """Load character list from active world."""
+        self.load_entities("characters")
+
+    def load_entities(self, section: str = "characters"):
+        """Load entity list for a section into characters list."""
+        if self.active_world:
+            from helpers import list_entities, list_entities_with_folders
+            self.characters = list_entities(self.active_world, section)
+            self.folder_data = list_entities_with_folders(self.active_world, section)
         else:
             self.characters = []
+            self.folder_data = None
         self.clear_portrait_cache()
 
     def select_character(self, char_path: Path):
@@ -194,16 +263,38 @@ class AppState:
                 }
             self.active_field = "name"
 
-    def load_templates(self):
-        """Load templates from active vault."""
-        if self.active_vault:
-            from templates import discover_templates
-            self.templates = discover_templates(self.active_vault)
+    def load_templates(self, section: str = "characters"):
+        """Load templates for a section."""
+        if self.active_world:
+            from templates import ensure_section_templates, discover_templates
+            ensure_section_templates(self.active_world, section)
+            self.templates = discover_templates(self.active_world, section)
             if self.templates:
                 self.active_template = self.templates[0]
         else:
             self.templates = []
             self.active_template = None
+
+    def load_timeline_data(self):
+        """Load timeline events, eras, and config from the active world."""
+        if self.active_world:
+            from helpers import load_timeline_events, get_calendar_config
+            self.timeline_events = load_timeline_events(self.active_world)
+            calendar = get_calendar_config(self.active_world)
+            self.timeline_eras = calendar.get("eras", [])
+            self.timeline_start_year = float(calendar.get("start_year", -500))
+            self.timeline_end_year = float(calendar.get("end_year", 1500))
+            cy = calendar.get("current_year")
+            self.timeline_current_year = float(cy) if cy is not None else None
+            self.timeline_time_format = calendar.get("time_format", "year_only")
+            self.timeline_negative_label = calendar.get("negative_label", "BC")
+            self.timeline_positive_label = calendar.get("positive_label", "AD")
+        else:
+            self.timeline_events = []
+            self.timeline_eras = []
+        # Clear selection when reloading
+        self.selected_event_index = -1
+        self.selected_event_data = None
 
     def resolve_template_for_character(self):
         """Set active_template based on current character's _meta.template field."""

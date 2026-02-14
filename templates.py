@@ -16,11 +16,12 @@ FIELD_TYPE_TAGS = "tags"
 FIELD_TYPE_NUMBER = "number"
 FIELD_TYPE_IMAGE = "image"
 FIELD_TYPE_MIMAGE = "mimage"
+FIELD_TYPE_LINK = "link"
 
 IMAGE_FIELD_TYPES = {FIELD_TYPE_IMAGE, FIELD_TYPE_MIMAGE}
 VALID_FIELD_TYPES = {
     FIELD_TYPE_TEXT, FIELD_TYPE_MULTILINE, FIELD_TYPE_TAGS, FIELD_TYPE_NUMBER,
-    FIELD_TYPE_IMAGE, FIELD_TYPE_MIMAGE,
+    FIELD_TYPE_IMAGE, FIELD_TYPE_MIMAGE, FIELD_TYPE_LINK,
 }
 
 # Default image dimensions
@@ -30,13 +31,13 @@ DEFAULT_MIMAGE_WIDTH = 300
 DEFAULT_MIMAGE_HEIGHT = 300
 
 # Regex to match {key}, {key|type}, {key|type|w=N|h=N}, {key|type|required}, etc.
-_FIELD_PLACEHOLDER = re.compile(r'\{(\w[\w|=]*)\}')
+_FIELD_PLACEHOLDER = re.compile(r'\{(\w[\w|=,]*)\}')
 
 
 def _parse_field_placeholder(raw: str) -> dict | None:
     """Parse a field placeholder like 'name|text|required' or 'portrait|image|w=150|h=150|required'.
 
-    Returns dict with key, field_type, image_width, image_height, required.
+    Returns dict with key, field_type, image_width, image_height, required, link_targets.
     """
     parts = raw.split("|")
     if not parts:
@@ -47,6 +48,7 @@ def _parse_field_placeholder(raw: str) -> dict | None:
     img_w = 0
     img_h = 0
     required = False
+    link_targets: list[str] = []
 
     for part in parts[1:]:
         if part in VALID_FIELD_TYPES:
@@ -61,10 +63,13 @@ def _parse_field_placeholder(raw: str) -> dict | None:
                 img_h = int(part[2:])
             except ValueError:
                 pass
+        elif part.startswith("target="):
+            link_targets = [t.strip() for t in part[7:].split(",") if t.strip()]
         elif part == "required":
             required = True
 
-    return {"key": key, "field_type": field_type, "image_width": img_w, "image_height": img_h, "required": required}
+    return {"key": key, "field_type": field_type, "image_width": img_w, "image_height": img_h,
+            "required": required, "link_targets": link_targets}
 
 
 @dataclass
@@ -76,6 +81,7 @@ class TemplateField:
     required: bool = False
     image_width: int = 0   # 0 = use default for type
     image_height: int = 0
+    link_targets: list = field(default_factory=list)  # ["characters", "locations", etc.]
 
     @property
     def effective_image_width(self) -> int:
@@ -118,23 +124,32 @@ DEFAULT_TEMPLATE_MARKDOWN = """\
 name: Default Character
 author: Codex
 version: 1.0
-description: Standard character template with all default fields
+description: Standard character template
 ---
+
+## Main Image
+{showcase|mimage|w=350|h=250}
+
 ## Name
 {name|required}
-![portrait]
-## Summary
-{summary|multiline}
-## Description
-{description|multiline}
-## Traits
-{traits|multiline}
-## History
-{history|multiline}
-## Relationships
-{relationships|multiline}
+
+## Portrait
+{portrait|image|w=150|h=150}
+
 ## Tags
 {tags|tags}
+
+## Summary
+{summary}
+
+## Description
+{description|multiline}
+
+## Traits
+{traits|multiline}
+
+## History
+{history|multiline}
 """
 
 
@@ -144,18 +159,18 @@ def get_default_template() -> Template:
         name="Default Character",
         author="Codex",
         version="1.0",
-        description="Standard character template with all default fields",
+        description="Standard character template",
         filename="default.md",
         fields=[
+            TemplateField("showcase", "Main Image", FIELD_TYPE_MIMAGE, image_width=350, image_height=250),
             TemplateField("name", "Name", FIELD_TYPE_TEXT, required=True),
-            TemplateField("summary", "Summary", FIELD_TYPE_MULTILINE),
+            TemplateField("portrait", "Portrait", FIELD_TYPE_IMAGE, image_width=150, image_height=150),
+            TemplateField("tags", "Tags", FIELD_TYPE_TAGS),
+            TemplateField("summary", "Summary", FIELD_TYPE_TEXT),
             TemplateField("description", "Description", FIELD_TYPE_MULTILINE),
             TemplateField("traits", "Traits", FIELD_TYPE_MULTILINE),
             TemplateField("history", "History", FIELD_TYPE_MULTILINE),
-            TemplateField("relationships", "Relationships", FIELD_TYPE_MULTILINE),
-            TemplateField("tags", "Tags", FIELD_TYPE_TAGS),
         ],
-        portrait_position=1,
     )
 
 
@@ -253,6 +268,7 @@ def parse_template(markdown: str, filename: str = "") -> Template:
             img_w = parsed["image_width"]
             img_h = parsed["image_height"]
             is_required = parsed["required"]
+            targets = parsed.get("link_targets", [])
 
             # Image fields don't require a section header; derive display name from key
             if field_type in IMAGE_FIELD_TYPES:
@@ -275,6 +291,7 @@ def parse_template(markdown: str, filename: str = "") -> Template:
                     required=is_required,
                     image_width=img_w,
                     image_height=img_h,
+                    link_targets=targets,
                 ))
                 field_count += 1
                 current_section = None
@@ -304,6 +321,9 @@ def template_fields_to_field_configs(template: Template) -> list:
     for tf in template.fields:
         # Image fields are managed in character view, not in create/edit modals
         if tf.field_type in IMAGE_FIELD_TYPES:
+            continue
+        # Link fields have their own rendering in the form
+        if tf.field_type == FIELD_TYPE_LINK:
             continue
         req = "* " if tf.required else ""
         if tf.field_type == FIELD_TYPE_MULTILINE:
@@ -387,37 +407,56 @@ def render_character_from_template(template: Template, form_data: dict) -> str:
 
 # --- Discovery & persistence ---
 
-def discover_templates(vault_path: Path) -> list[Template]:
-    """Find and parse all template .md files in vault/templates/."""
-    templates_dir = vault_path / "templates"
-    if not templates_dir.exists():
-        return [get_default_template()]
-
+def discover_templates(world_path: Path, section: str = "characters") -> list[Template]:
+    """Find and parse all template .md files for a section."""
     templates = []
     default_found = False
+    seen_files: set[str] = set()
 
-    for template_file in sorted(templates_dir.glob("*.md")):
-        try:
-            content = template_file.read_text(encoding="utf-8")
-            parsed = parse_template(content, template_file.name)
-            templates.append(parsed)
-            if template_file.stem == "default":
-                default_found = True
-        except Exception as e:
-            print(f"[ERROR] Failed to parse template {template_file}: {e}")
+    # Look in section-specific directory first
+    section_dir = world_path / "templates" / section
+    if section_dir.exists():
+        for template_file in sorted(section_dir.glob("*.md")):
+            try:
+                content = template_file.read_text(encoding="utf-8")
+                parsed = parse_template(content, template_file.name)
+                templates.append(parsed)
+                seen_files.add(template_file.name)
+                if template_file.stem == "default":
+                    default_found = True
+            except Exception as e:
+                print(f"[ERROR] Failed to parse template {template_file}: {e}")
+
+    # For characters, also check legacy templates/ root (backward compat)
+    if section == "characters":
+        legacy_dir = world_path / "templates"
+        if legacy_dir.exists():
+            for template_file in sorted(legacy_dir.glob("*.md")):
+                if template_file.name in seen_files:
+                    continue
+                try:
+                    content = template_file.read_text(encoding="utf-8")
+                    parsed = parse_template(content, template_file.name)
+                    templates.append(parsed)
+                    if template_file.stem == "default":
+                        default_found = True
+                except Exception as e:
+                    print(f"[ERROR] Failed to parse template {template_file}: {e}")
+
+    default_template = get_section_default_template(section)
 
     if not default_found:
-        templates.insert(0, get_default_template())
+        templates.insert(0, default_template)
 
     # Sort: default first, then alphabetical
     templates.sort(key=lambda t: ("" if t.template_id == "default" else t.name.lower()))
 
-    return templates if templates else [get_default_template()]
+    return templates if templates else [default_template]
 
 
-def save_template(vault_path: Path, template: Template) -> Path:
-    """Write a template to vault/templates/{template_id}.md."""
-    templates_dir = vault_path / "templates"
+def save_template(world_path: Path, template: Template) -> Path:
+    """Write a template to world/templates/{template_id}.md."""
+    templates_dir = world_path / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
 
     # Build markdown
@@ -459,6 +498,19 @@ def save_template(vault_path: Path, template: Template) -> Path:
             field_idx += 1
             continue
 
+        # Link fields: write placeholder with target
+        if tf.field_type == FIELD_TYPE_LINK:
+            target_str = ",".join(tf.link_targets) if tf.link_targets else ""
+            placeholder = f"{{{tf.key}|link"
+            if target_str:
+                placeholder += f"|target={target_str}"
+            placeholder += f"{req_suffix}}}"
+            lines.append(f"## {tf.display_name}")
+            lines.append(placeholder)
+            lines.append("")
+            field_idx += 1
+            continue
+
         lines.append(f"## {tf.display_name}")
         if tf.field_type == FIELD_TYPE_TEXT and not req_suffix:
             lines.append(f"{{{tf.key}}}")
@@ -480,11 +532,380 @@ def save_template(vault_path: Path, template: Template) -> Path:
     return filepath
 
 
-def ensure_default_template(vault_path: Path) -> None:
-    """Create vault/templates/default.md if it doesn't exist."""
-    templates_dir = vault_path / "templates"
+def _migrate_template_links(existing_path: Path, reference_markdown: str) -> bool:
+    """Upgrade multiline fields to link fields based on reference template.
+
+    Scans the existing template for fields that the reference defines as 'link',
+    and rewrites them in-place. Also adds any missing link fields from the
+    reference. Preserves all other user customizations (extra fields, image
+    fields, ordering). Only touches Codex-authored templates with a lower
+    version.
+
+    Returns True if the file was modified.
+    """
+    import re
+    try:
+        content = existing_path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    old_meta, _ = _strip_frontmatter(content)
+    new_meta, _ = _strip_frontmatter(reference_markdown)
+    if old_meta.get("author", "") != "Codex":
+        return False
+    old_ver = str(old_meta.get("version", "0"))
+    new_ver = str(new_meta.get("version", "0"))
+    if old_ver >= new_ver:
+        return False
+
+    # Build map of link fields from reference: key -> "key|link|target=..."
+    ref_template = parse_template(reference_markdown, "ref")
+    link_fields: dict[str, TemplateField] = {}
+    for tf in ref_template.fields:
+        if tf.field_type == FIELD_TYPE_LINK:
+            link_fields[tf.key] = tf
+
+    if not link_fields:
+        # Just bump version
+        content = re.sub(r'(?m)^version:\s*\S+', f'version: {new_ver}', content)
+        existing_path.write_text(content, encoding="utf-8")
+        return True
+
+    modified = content
+    existing_keys = set()
+
+    # Upgrade existing fields: {key|multiline} -> {key|link|target=...}
+    for key, tf in link_fields.items():
+        targets_str = ",".join(tf.link_targets)
+        # Match {key}, {key|text}, {key|multiline}, etc.
+        pattern = re.compile(r'\{' + re.escape(key) + r'(\|[^}]*)?\}')
+        replacement = '{' + key + '|link|target=' + targets_str + '}'
+        new_modified = pattern.sub(replacement, modified)
+        if new_modified != modified:
+            existing_keys.add(key)
+            modified = new_modified
+
+    # Add missing link fields before ## Tags (or at end)
+    for key, tf in link_fields.items():
+        if key not in existing_keys:
+            targets_str = ",".join(tf.link_targets)
+            new_section = f"## {tf.display_name}\n{{{key}|link|target={targets_str}}}"
+            # Insert before ## Tags if it exists, otherwise append
+            if "## Tags" in modified:
+                modified = modified.replace("## Tags", new_section + "\n## Tags")
+            else:
+                modified = modified.rstrip() + "\n" + new_section + "\n"
+
+    # Bump version
+    modified = re.sub(r'(?m)^version:\s*\S+', f'version: {new_ver}', modified)
+
+    existing_path.write_text(modified, encoding="utf-8")
+    return True
+
+
+def ensure_default_template(world_path: Path) -> None:
+    """Create or update world/templates/default.md."""
+    templates_dir = world_path / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
 
     default_path = templates_dir / "default.md"
+    new_md = get_default_template_markdown()
     if not default_path.exists():
-        default_path.write_text(get_default_template_markdown(), encoding="utf-8")
+        default_path.write_text(new_md, encoding="utf-8")
+    else:
+        _migrate_template_links(default_path, new_md)
+
+
+# --- Section-specific default templates ---
+
+LOCATION_DEFAULT_TEMPLATE = """\
+---
+name: Default Location
+author: Codex
+version: 1.1
+description: Standard location template
+---
+## Name
+{name|required}
+![portrait]
+## Summary
+{summary|multiline}
+## Description
+{description|multiline}
+## Geography
+{geography|multiline}
+## Notable Features
+{notable_features|multiline}
+## Notable Characters
+{notable_characters|link|target=characters}
+## Connected Locations
+{connected_locations|link|target=locations}
+## Historical Events
+{historical_events|link|target=timeline}
+## Related
+{location_related|link|target=codex}
+## Tags
+{tags|tags}
+"""
+
+TIMELINE_DEFAULT_TEMPLATE = """\
+---
+name: Default Event
+author: Codex
+version: 1.1
+description: Timeline event template
+---
+## Image
+{image|image|w=300|h=200}
+## Name
+{name|required}
+## Date
+{date|number|required}
+## Era
+{era}
+## Tags
+{tags|tags}
+## Description
+{description|multiline}
+## Characters Involved
+{characters_involved|link|target=characters}
+## Locations
+{locations|link|target=locations}
+## Related
+{related|link|target=codex,timeline}
+## Consequences
+{consequences|multiline}
+"""
+
+CODEX_DEFAULT_TEMPLATE = """\
+---
+name: Default Entry
+author: Codex
+version: 1.1
+description: General-purpose codex entry
+---
+## Name
+{name|required}
+![portrait]
+## Summary
+{summary|multiline}
+## Description
+{description|multiline}
+## Notable Members
+{notable_members|link|target=characters}
+## Locations
+{codex_locations|link|target=locations}
+## Key Events
+{codex_events|link|target=timeline}
+## Related
+{codex_related|link|target=codex}
+## Tags
+{tags|tags}
+"""
+
+CODEX_TEMPLATES = {
+    "item": """\
+---
+name: Item
+author: Codex
+version: 1.1
+description: Items, weapons, and artifacts
+---
+## Name
+{name|required}
+## Type
+{type}
+## Summary
+{summary|multiline}
+## Description
+{description|multiline}
+## Properties
+{properties|multiline}
+## History
+{history|multiline}
+## Tags
+{tags|tags}
+""",
+    "faction": """\
+---
+name: Faction
+author: Codex
+version: 1.1
+description: Organizations, guilds, and groups
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Goals
+{goals|multiline}
+## Structure
+{structure|multiline}
+## Notable Members
+{notable_members|link|target=characters}
+## Headquarters
+{headquarters|link|target=locations}
+## Key Events
+{faction_events|link|target=timeline}
+## History
+{history|multiline}
+## Related
+{faction_related|link|target=codex}
+## Tags
+{tags|tags}
+""",
+    "race": """\
+---
+name: Race
+author: Codex
+version: 1.1
+description: Species and races
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Physical Traits
+{physical_traits|multiline}
+## Culture
+{culture|multiline}
+## Abilities
+{abilities|multiline}
+## History
+{history|multiline}
+## Tags
+{tags|tags}
+""",
+    "power_system": """\
+---
+name: Power System
+author: Codex
+version: 1.1
+description: Magic systems, technology, and powers
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Rules
+{rules|multiline}
+## Limitations
+{limitations|multiline}
+## Practitioners
+{practitioners|multiline}
+## History
+{history|multiline}
+## Tags
+{tags|tags}
+""",
+    "creature": """\
+---
+name: Creature
+author: Codex
+version: 1.1
+description: Creatures, beasts, and monsters
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Appearance
+{appearance|multiline}
+## Behavior
+{behavior|multiline}
+## Habitat
+{habitat|multiline}
+## Abilities
+{abilities|multiline}
+## Tags
+{tags|tags}
+""",
+    "culture": """\
+---
+name: Culture
+author: Codex
+version: 1.1
+description: Cultures, traditions, and customs
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Values
+{values|multiline}
+## Traditions
+{traditions|multiline}
+## Social Structure
+{social_structure|multiline}
+## History
+{history|multiline}
+## Tags
+{tags|tags}
+""",
+    "language": """\
+---
+name: Language
+author: Codex
+version: 1.1
+description: Languages and writing systems
+---
+## Name
+{name|required}
+## Summary
+{summary|multiline}
+## Grammar
+{grammar|multiline}
+## Vocabulary
+{vocabulary|multiline}
+## Writing System
+{writing_system|multiline}
+## Speakers
+{speakers|multiline}
+## Tags
+{tags|tags}
+""",
+}
+
+# Map section -> default template markdown
+SECTION_DEFAULT_TEMPLATES = {
+    "characters": DEFAULT_TEMPLATE_MARKDOWN,
+    "locations": LOCATION_DEFAULT_TEMPLATE,
+    "timeline": TIMELINE_DEFAULT_TEMPLATE,
+    "codex": CODEX_DEFAULT_TEMPLATE,
+}
+
+
+def get_section_default_template(section: str = "characters") -> Template:
+    """Return the built-in default template for a section."""
+    if section == "characters":
+        return get_default_template()
+    md = SECTION_DEFAULT_TEMPLATES.get(section, CODEX_DEFAULT_TEMPLATE)
+    return parse_template(md, "default.md")
+
+
+def ensure_section_templates(world_path: Path, section: str) -> None:
+    """Create or update default template files for a section."""
+    # Characters use the legacy root templates/default.md via ensure_default_template
+    if section == "characters":
+        ensure_default_template(world_path)
+        return
+
+    templates_dir = world_path / "templates" / section
+    templates_dir.mkdir(parents=True, exist_ok=True)
+
+    # Default template
+    default_path = templates_dir / "default.md"
+    md = SECTION_DEFAULT_TEMPLATES.get(section)
+    if md:
+        if not default_path.exists():
+            default_path.write_text(md, encoding="utf-8")
+        else:
+            _migrate_template_links(default_path, md)
+
+    # Codex section has additional templates
+    if section == "codex":
+        for template_id, tmpl_md in CODEX_TEMPLATES.items():
+            path = templates_dir / f"{template_id}.md"
+            if not path.exists():
+                path.write_text(tmpl_md, encoding="utf-8")
+            else:
+                _migrate_template_links(path, tmpl_md)
