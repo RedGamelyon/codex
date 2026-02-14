@@ -11,6 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug - List files
+        run: |
+          pwd
+          ls -la
+          echo "---"
+          git log --oneline -3
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -37,6 +44,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Debug - List files
+        run: |
+          cd .
+          dir
+          echo ---
+          git log --oneline -3
 
       - name: Set up Python
         uses: actions/setup-python@v5
