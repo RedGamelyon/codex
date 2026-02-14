@@ -205,7 +205,7 @@ Contributions are welcome. If you find a bug or have a feature idea, open an iss
 
 ## License
 
-[License TBD]
+MIT License
 
 ---
 
